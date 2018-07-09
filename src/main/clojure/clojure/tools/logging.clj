@@ -21,7 +21,7 @@
             (see also the *-factory functions in the impl namespace)."}
   clojure.tools.logging
   (:use
-   [clojure.string :only [trim-newline]]
+   [clojure.string :only [trim-newline join]]
    [clojure.pprint :only [code-dispatch pprint with-pprint-dispatch]])
   (:require [clojure.tools.logging.impl :as impl]))
 
@@ -39,6 +39,27 @@
   "Overrides the default rules for choosing between logging directly or via an
   agent. Defaults to nil. See log* for details." :dynamic true}
   *force* nil)
+
+(declare ^{:dynamic true} *prefixes*) ; a string with contextual information as prefixes to all logging
+
+(defmacro with-prefix
+  "Takes a map that will add contextual information as prefix to all logs within the body.
+  Keys of kws must be either strings or keywords only."
+  [kws & body]
+  {:pre [(map? kws)]}
+  `(binding [*prefixes* (str *prefixes*
+                             (when *prefixes* " | ")
+                             (->> ~kws
+                                  (map (fn [[k# v#]] (str (name k#) "=" v#)))
+                                  (join " | ")))]
+     ~@body))
+
+(defn- prefixed-write
+  [logger level throwable message]
+  (let [message (str (when *prefixes*
+                       (str "[" *prefixes* "] "))
+                     message)]
+    (impl/write! logger level throwable message)))
 
 (defn log*
   "Attempts to log a message, either directly or via an agent; does not check if
@@ -60,8 +81,8 @@
         (and (clojure.lang.LockingTransaction/isRunning)
              (*tx-agent-levels* level)))
     (send-off *logging-agent*
-      (fn [_#] (impl/write! logger level throwable message)))
-    (impl/write! logger level throwable message))
+      (fn [_#] (prefixed-write logger level throwable message)))
+    (prefixed-write logger level throwable message))
   nil)
 
 (declare ^{:dynamic true} *logger-factory*) ; default LoggerFactory instance for calling impl/get-logger
